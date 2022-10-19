@@ -1,0 +1,237 @@
+spice-vdagent (0.20.0-3) unstable; urgency=medium
+
+  * QA upload.
+  * Add patch for autoconf 2.71 compatibility. (Closes: #994424)
+
+ -- Adrian Bunk <bunk@debian.org>  Thu, 14 Oct 2021 20:30:48 +0300
+
+spice-vdagent (0.20.0-2) unstable; urgency=medium
+
+  * QA upload.
+  * Set Maintainer to Debian QA Group. (see #911430)
+  * Add changes from Ubuntu:
+    * SECURITY UPDATE: Memory DoS via Arbitrary Entries in active_xfers Hash
+      Table
+      - debian/patches/CVE-2020-25650-1.patch: avoid agents allocating file
+        transfers in src/vdagentd/vdagentd.c.
+      - debian/patches/CVE-2020-25650-2.patch: avoid uncontrolled
+        active_xfers allocations in src/vdagentd/vdagentd.c.
+      - CVE-2020-25650
+    * SECURITY UPDATE: Possible File Transfer DoS and Information Leak via
+      active_xfers Hash Map
+      - debian/patches/CVE-2020-25651-1.patch: cleanup active_xfers when the
+        client disconnects in src/vdagentd/vdagentd.c.
+      - debian/patches/CVE-2020-25651-2.patch: do not allow using an already
+        used file-xfer id in src/vdagentd/vdagentd.c.
+      - CVE-2020-25651
+    * SECURITY UPDATE: Possibility to Exhaust File Descriptors in vdagentd
+      - debian/patches/CVE-2020-25652-1.patch: avoid unlimited agent
+        connections in src/udscs.c.
+      - debian/patches/CVE-2020-25652-2.patch: limit number of agents per
+        session to 1 in src/vdagentd/vdagentd.c.
+      - CVE-2020-25652
+    * SECURITY UPDATE: UNIX Domain Socket Peer PID Retrieved via SO_PEERCRED
+      is Subject to Race Condition
+      - debian/patches/CVE-2020-25653-1.patch: avoid user session hijacking
+        in src/vdagent-connection.c, src/vdagent-connection.h,
+        src/vdagentd/vdagentd.c.
+      - debian/patches/CVE-2020-25653-2.patch: better check for sessions in
+        src/vdagentd/console-kit.c, src/vdagentd/dummy-session-info.c,
+        src/vdagentd/session-info.h, src/vdagentd/systemd-login.c,
+        src/vdagentd/vdagentd.c.
+      - CVE-2020-25653
+    * Additional fixes:
+      - debian/patches/CVE-2020-2565x-1.patch: avoid calling chmod in
+        src/vdagentd/vdagentd.c.
+    (Closes: #973769)
+
+ -- Adrian Bunk <bunk@debian.org>  Thu, 03 Dec 2020 21:37:35 +0200
+
+spice-vdagent (0.20.0-1) unstable; urgency=medium
+
+  * Team upload.
+  * New upstream release
+    - Fix race fixes between client and guest clipboard (Closes: #854936)
+    - Bump libglib2.0-dev, libgtk-3-dev and libspice-protocol-dev BD
+    - Drop d/p/vdagentd-Fix-session-lookup-for-new-GNOME-versions.patch,
+      applied upstream
+  * debian/gbp.conf: Enable pristine-tar
+  * debian/control: Bump Standards-Version to 4.5.0 (no further changes)
+  * debian/rules: Do not pass --as-needed to the linker, this is the default now
+  * Import two patch from upstream to fix crash in containers and shutdown of
+    the daemon
+
+ -- Laurent Bigonville <bigon@debian.org>  Sun, 26 Apr 2020 09:53:08 +0200
+
+spice-vdagent (0.19.0-2) unstable; urgency=medium
+
+  * Team upload.
+  * d/p/vdagentd-Fix-session-lookup-for-new-GNOME-versions.patch: Fix session
+    lookup for new GNOME versions (thanks to Iain Lane <laney@debian.org>)
+
+ -- Laurent Bigonville <bigon@debian.org>  Fri, 27 Sep 2019 10:40:40 +0200
+
+spice-vdagent (0.19.0-1) unstable; urgency=medium
+
+  * Team upload.
+  * Enable upstream tarball signature verification
+  * New upstream version 0.19.0
+    - tmpfiles.d/spice-vdagentd.conf now uses /run instead of /var/run
+      (Closes: #910363)
+  * debian/control: Adjust the build-dependencies
+  * debian/control: Bump Standards-Version to 4.4.0 (no further changes)
+  * debian/patches/systemd_service_default_file.patch: Refreshed
+  * debian/docs: TODO file is gone and README has been renamed to README.md
+  * Bump debhelper compatibility to 12.
+    This will switch the package to dh_installsystemd and prevent the
+    service to start on machines that are virtual machines with virtio
+    channel enabled
+
+ -- Laurent Bigonville <bigon@debian.org>  Wed, 14 Aug 2019 11:14:49 +0200
+
+spice-vdagent (0.18.0-1) unstable; urgency=medium
+
+  * Team upload.
+  [ Laurent Bigonville ]
+  * debian/watch: Update the URL
+  * New upstream version 0.18.0 (Closes: #905771)
+    - Quote the save directory before passing to shell (Closes: #883238
+      CVE-2017-15108)
+    - Drop the patches merged upstream
+    - debian/patches/systemd_service_default_file.patch: Refreshed
+    - debian/control: Bump the build-dependencies
+  * debian/control: Build-depend against udev
+  * debian/control: Drop dh-systemd, not needed with debhelper >= 10
+  * debian/control: Bump Standards-Version to 4.2.1 (no further changes)
+  * debian/control: Update Vcs- fields to the new URL
+  * Enable GTK support, the X11 backend is deprecated
+  * debian/rules: Reduce the number of runtime dependencies
+  * debian/control: Fix typos in the Description.
+    Thanks to Ludovic Rousseau <ludovic.rousseau@free.fr> (Closes: #874678)
+  * debian/rules: Use dh_auto_install instead of calling make directly
+  * debian/rules: Use dh_missing --list-missing instead of dh_install
+
+  [ Helmut Grohne ]
+  * Fix FTCBFS: Let dh_auto_configure pass --host to ./configure.
+    (Closes: #894116)
+
+ -- Laurent Bigonville <bigon@debian.org>  Wed, 03 Oct 2018 01:22:06 +0200
+
+spice-vdagent (0.17.0-1) unstable; urgency=low
+
+  * New upstream release
+  * Refresh debian/copyright
+  * debian/patches:
+    - Remove libsystemd.patch, applied upstream
+    - systemd_service_default_file.patch, remove After=dbus.target,
+      obsoleted by recent systemd
+    - Refresh other patches
+  * debian/control:
+    - Add build-depends on libasound2-dev (>= 1.0.22)
+    - Update build-depends on libspice-protocol-dev to 0.12.8
+    - Update build-depends on libglib2.0-dev to 2.28
+    - Update build-depends on debhelper to 10
+    - Bump Standards-Version to 3.9.8
+    - Use secure uri in vcs-*
+  * debian/spice-vdagent.install:
+    - Remove etc/rsyslog.d/spice-vdagentd.conf, removed upstream
+  * debian/compat:
+    - Update to version 10
+  * debian/rules
+    - Call dh with autoreconf
+
+ -- Liang Guo <guoliang@debian.org>  Wed, 12 Oct 2016 15:41:11 +0800
+
+spice-vdagent (0.15.0-1.3) unstable; urgency=medium
+
+  * Non-maintainer upload.
+  [ Laurent Bigonville ]
+  * Properly install the systemd .service and other support files (Closes:
+    #791422)
+  * debian/spice-vdagent.init: Pass parameters from $SPICE_VDAGENTD_EXTRA_ARGS
+    variable to the spice-vdagentd daemon, so both LSB initscript and .service
+    files behave the same.
+  * debian/rules: Call dh_install with --list-missing parameter
+
+  [ Michael Biebl ]
+  * Use of the new libsystemd library instead of libsystemd-login (Closes:
+    #779782)
+
+ -- Laurent Bigonville <bigon@debian.org>  Sun, 19 Jul 2015 15:05:48 +0200
+
+spice-vdagent (0.15.0-1.2) unstable; urgency=medium
+
+  * Non-maintainer upload, with permission from maintainer.
+  * Use systemd for session information (Closes: #756243).
+    Accordingly build-depend on libsystemd-login-dev, which is needed
+    for getting session information from logind.
+  * Start spice-vdagent in the GDM3 greeter session (Closes: #732924).
+
+ -- intrigeri <intrigeri@debian.org>  Tue, 07 Oct 2014 16:47:46 +0200
+
+spice-vdagent (0.15.0-1.1) unstable; urgency=medium
+
+  * Non-maintainer upload.
+  * Fix syntax of fix-spelling-error-in-manpage.patch (Closes: #752953).
+    Thanks to Juhani Numminen <juhaninumminen0@gmail.com> for the patch!
+
+ -- intrigeri <intrigeri@debian.org>  Sun, 27 Jul 2014 22:36:52 +0200
+
+spice-vdagent (0.15.0-1) unstable; urgency=low
+
+  * New upstream release
+  * Update debian/watch
+  * debian/patches:
+    - Refresh fix-typo-in-vdagentd-c.patch
+    - Add enable-pie-on-spice-vdagent.patch
+  * debian/rules:
+    - Install systemd config files
+    - Enalbe PIE
+  * debian/cotntrol:
+    - Update VCS-* field
+
+ -- Liang Guo <guoliang@debian.org>  Sat, 09 Nov 2013 12:33:51 +0800
+
+spice-vdagent (0.14.0-1) unstable; urgency=low
+
+  * New upstream release
+  * debian/control:
+    - Update my email address
+    - Depends on libspice-protocol-dev (>= 0.12.5)
+    - Depends on libglib2.0-dev (>= 2.12)
+    - Depends on autoconf, automake
+  * debian/source/options:
+    - Ignore autoreconf generated files
+  * debian/rules:
+    - Call autoreconf before run configure script
+  * Refresh fix-typo-in-vdagentd-c.patch
+  * Add fix-spelling-error-in-manpage.patch
+  * Refresh debian/copyright
+  * Remove debian/spice-vdagent.1 and debian/spice-vdagentd.8, 
+    upstream ships manpages 
+  * spice-vdagent.install:
+    - Remove var/log/spice-vdagentd
+    - Add etc/rsyslog.d/spice-vdagentd.conf
+  * Bump Standards-Version to 3.9.4(no change required)
+  
+ -- Liang Guo <guoliang@debian.org>  Fri, 12 Apr 2013 23:32:00 +0800
+  
+spice-vdagent (0.10.1-1) unstable; urgency=low
+
+  * New upstream release.
+  * debian/copyright:
+    - Update copyright information.
+  * debian/control:
+    - Add libpciaccess-dev and libxinerama-dev 
+      to Build-Depends.
+    - Bump Standards-Version to 3.9.3. 
+  * debian/rules:
+    - Compile with console kit
+
+ -- Liang Guo <bluestonechina@gmail.com>  Fri, 06 Apr 2012 14:03:30 +0800
+
+spice-vdagent (0.8.1-1) unstable; urgency=low
+
+  * Initial release (Closes: #605966)
+
+ -- Liang Guo <bluestonechina@gmail.com>  Sun, 21 Aug 2011 15:19:00 +0800

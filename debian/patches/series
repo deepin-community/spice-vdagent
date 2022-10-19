@@ -1,0 +1,13 @@
+systemd_service_default_file.patch
+vdagentd-work-around-GLib-s-fork-issues.patch
+systemd-login-Avoid-a-crash-on-container.patch
+CVE-2020-25650-1.patch
+CVE-2020-25650-2.patch
+CVE-2020-25651-1.patch
+CVE-2020-25651-2.patch
+CVE-2020-25653-1.patch
+CVE-2020-25653-2.patch
+CVE-2020-25652-1.patch
+CVE-2020-25652-2.patch
+CVE-2020-2565x-1.patch
+0001-configure.ac-autoconf-2.71-compatibility.patch

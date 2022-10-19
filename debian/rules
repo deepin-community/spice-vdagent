@@ -1,0 +1,27 @@
+#!/usr/bin/make -f
+# -*- makefile -*-
+# debian/rules for spice-vdagent
+
+# Uncomment this to turn on verbose mode.
+#export DH_VERBOSE=1
+
+override_dh_auto_install:
+	dh_auto_install --destdir=$(CURDIR)/debian/tmp
+
+override_dh_auto_configure:
+	dh_auto_configure -- \
+		    --with-init-script=systemd \
+		    --enable-pie=yes \
+                    --with-session-info=systemd \
+		    --with-gtk=yes
+%:
+	dh $@
+
+override_dh_install:
+	dh_install
+# We cannot add this to the .link file because dh_link is called after
+# dh_systemd_* helpers during normal build
+	dh_link lib/systemd/system/spice-vdagentd.service lib/systemd/system/spice-vdagent.service
+
+override_dh_missing:
+	dh_missing --list-missing

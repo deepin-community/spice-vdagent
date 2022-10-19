@@ -1,0 +1,26 @@
+From 4d70ab34b0329a61e68dc4daeff80c264e65922f Mon Sep 17 00:00:00 2001
+From: Adrian Bunk <bunk@debian.org>
+Date: Thu, 14 Oct 2021 20:27:53 +0300
+Subject: configure.ac: autoconf 2.71 compatibility
+
+"y" is not "set", but both have non-zero lengths.
+---
+ configure.ac | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/configure.ac b/configure.ac
+index f6abf3d..be65606 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -178,7 +178,7 @@ if test x"$enable_static_uinput" = "xyes" ; then
+ fi
+ 
+ # If no CFLAGS are set, set some sane default CFLAGS
+-if test "$ac_test_CFLAGS" != set; then
++if test -z "$ac_test_CFLAGS"; then
+   DEFAULT_CFLAGS="-Wall -Werror -Wp,-D_FORTIFY_SOURCE=2 -fno-strict-aliasing -fstack-protector --param=ssp-buffer-size=4"
+   for F in $DEFAULT_CFLAGS; do
+     AC_MSG_CHECKING([whether $CC supports $F])
+-- 
+2.20.1
+

@@ -1,0 +1,7 @@
+etc/xdg/autostart/spice-vdagent.desktop
+lib/systemd/system
+lib/udev/rules.d
+usr/bin
+usr/lib/tmpfiles.d
+usr/sbin
+usr/share

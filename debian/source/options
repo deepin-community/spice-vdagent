@@ -1,0 +1,1 @@
+diff-ignore = Makefile.in|aclocal.m4|compile|configure|depcomp|missing|.git|.gitignore

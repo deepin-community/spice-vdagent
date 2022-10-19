@@ -1,0 +1,30 @@
+Description: Adjust the path to the default file
+Author: Laurent Bigonville <bigon@debian.org>
+Forwarded: not-needed
+
+--- a/data/spice-vdagentd.service
++++ b/data/spice-vdagentd.service
+@@ -1,11 +1,10 @@
+ [Unit]
+ Description=Agent daemon for Spice guests
+-After=dbus.target
+ Requires=spice-vdagentd.socket
+ 
+ [Service]
+ Type=forking
+-EnvironmentFile=-/etc/sysconfig/spice-vdagentd
++EnvironmentFile=-/etc/default/spice-vdagentd
+ ExecStart=/usr/sbin/spice-vdagentd $SPICE_VDAGENTD_EXTRA_ARGS
+ PIDFile=/run/spice-vdagentd/spice-vdagentd.pid
+ PrivateTmp=true
+--- a/data/spice-vdagentd.1.in
++++ b/data/spice-vdagentd.1.in
+@@ -54,7 +54,7 @@ only one \fBspice-vdagent\fR is allowed
+ .SH FILES
+ The Sys-V initscript or systemd unit parses the following files:
+ .TP
+-/etc/sysconfig/spice-vdagentd
++/etc/default/spice-vdagentd
+ Default cmdline options can be passed to \fBspice-vdagentd\fR by setting
+ them in the \fISPICE_VDAGENTD_EXTRA_ARGS\fR variable in this file
+ .SH SEE ALSO
