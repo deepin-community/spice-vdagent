@@ -1,3 +1,60 @@
+spice-vdagent (0.22.1-4.1) unstable; urgency=medium
+
+  * Non-maintainer upload.
+  * Drop systemd and udev Build-Depends and only keep systemd-dev. Only the
+    latter is required to get systemd.pc and udev.pc. (Closes: #1060560)
+
+ -- Michael Biebl <biebl@debian.org>  Wed, 17 Jul 2024 18:52:52 +0200
+
+spice-vdagent (0.22.1-4) unstable; urgency=medium
+
+  [ Helmut Grohne ]
+  * Fix FTBFS when systemd.pc changes systemdsystemunitdir and when udev.pc
+    changes unitdir. (Closes: #1052700)
+
+  [ Janitor ]
+  * Use versioned copyright format URI
+  * Use secure URI in Homepage field
+
+  [ Abhijith PA ]
+  * Bump Standards-Version
+
+ -- Abhijith PA <abhijith@debian.org>  Tue, 21 Nov 2023 12:23:12 +0530
+
+spice-vdagent (0.22.1-3) unstable; urgency=medium
+
+  [ Abhijith PA ]
+  * New maintainer (Closes: #911430)
+
+ -- Jelmer Vernooĳ <jelmer@debian.org>  Tue, 31 May 2022 20:33:55 +0100
+
+spice-vdagent (0.22.1-2) unstable; urgency=medium
+
+  * QA upload.
+
+  [ Jeremy Bicha ]
+  * debian/rules: Enable all hardening flags
+
+ -- Jelmer Vernooĳ <jelmer@debian.org>  Wed, 25 May 2022 12:06:34 +0100
+
+spice-vdagent (0.22.1-1) unstable; urgency=medium
+
+  * QA upload.
+
+  [ Jeremy Bicha ]
+  * New upstream release
+  * Drop patches applied in new release
+  * debian/spice-vdagent.install: Install new systemd user service
+  * Build-Depend on debhelper-compat 13
+
+  [ Abhijith PA ]
+  * debian/control: Build-Depend on procps
+  * Add patch to disable a build test that requires systemd running
+  * Add trivial autopkgtest
+  * Add salsa ci
+
+ -- Jeremy Bicha <jeremy.bicha@canonical.com>  Thu, 24 Feb 2022 10:08:24 -0500
+
 spice-vdagent (0.20.0-3) unstable; urgency=medium
 
   * QA upload.
@@ -207,24 +264,24 @@ spice-vdagent (0.14.0-1) unstable; urgency=low
   * Refresh fix-typo-in-vdagentd-c.patch
   * Add fix-spelling-error-in-manpage.patch
   * Refresh debian/copyright
-  * Remove debian/spice-vdagent.1 and debian/spice-vdagentd.8, 
-    upstream ships manpages 
+  * Remove debian/spice-vdagent.1 and debian/spice-vdagentd.8,
+    upstream ships manpages
   * spice-vdagent.install:
     - Remove var/log/spice-vdagentd
     - Add etc/rsyslog.d/spice-vdagentd.conf
   * Bump Standards-Version to 3.9.4(no change required)
-  
+
  -- Liang Guo <guoliang@debian.org>  Fri, 12 Apr 2013 23:32:00 +0800
-  
+
 spice-vdagent (0.10.1-1) unstable; urgency=low
 
   * New upstream release.
   * debian/copyright:
     - Update copyright information.
   * debian/control:
-    - Add libpciaccess-dev and libxinerama-dev 
+    - Add libpciaccess-dev and libxinerama-dev
       to Build-Depends.
-    - Bump Standards-Version to 3.9.3. 
+    - Bump Standards-Version to 3.9.3.
   * debian/rules:
     - Compile with console kit
 

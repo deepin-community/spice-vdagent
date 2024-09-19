@@ -36,8 +36,13 @@
 #include <glib.h>
 #ifdef WITH_GTK
 #include <gdk/gdk.h>
+#include <gtk/gtk.h>    // for GTK_CHECK_VERSION
 #ifdef GDK_WINDOWING_X11
-#include <gdk/gdkx.h>
+    #if GTK_CHECK_VERSION(3, 98, 0)
+        #include <gdk/x11/gdkx.h>
+    #else
+        #include <gdk/gdkx.h>
+    #endif
 #endif
 #endif
 #include <stdlib.h>
@@ -57,7 +62,7 @@
 int (*vdagent_x11_prev_error_handler)(Display *, XErrorEvent *);
 int vdagent_x11_caught_error;
 
-#ifndef WITH_GTK
+#ifndef USE_GTK_FOR_CLIPBOARD
 static void vdagent_x11_handle_selection_notify(struct vdagent_x11 *x11,
                                                 const XEvent *event, int incr);
 static void vdagent_x11_handle_selection_request(struct vdagent_x11 *x11);
@@ -69,6 +74,7 @@ static void vdagent_x11_send_selection_notify(struct vdagent_x11 *x11,
                 Atom prop, struct vdagent_x11_selection_request *request);
 static void vdagent_x11_set_clipboard_owner(struct vdagent_x11 *x11,
                                             uint8_t selection, int new_owner);
+static void uris_ready_cb(GObject *source, GAsyncResult *res, gpointer user_data);
 
 static const char *vdagent_x11_sel_to_str(uint8_t selection) {
     switch (selection) {
@@ -90,7 +96,6 @@ static int vdagent_x11_debug_error_handler(
     abort();
 }
 
-#ifndef WITH_GTK
 /* With the clipboard we're sometimes dealing with Properties on another apps
    Window. which can go away at any time. */
 static int vdagent_x11_ignore_bad_window_handler(
@@ -101,7 +106,6 @@ static int vdagent_x11_ignore_bad_window_handler(
 
     return vdagent_x11_prev_error_handler(display, error);
 }
-#endif
 
 void vdagent_x11_set_error_handler(struct vdagent_x11 *x11,
     int (*handler)(Display *, XErrorEvent *))
@@ -123,15 +127,8 @@ int vdagent_x11_restore_error_handler(struct vdagent_x11 *x11)
     return error;
 }
 
-static gchar *vdagent_x11_get_wm_name(struct vdagent_x11 *x11)
+gchar *vdagent_x11_get_wm_name(struct vdagent_x11 *x11)
 {
-#ifdef GDK_WINDOWING_X11
-    GdkDisplay *display = gdk_display_get_default();
-    if (GDK_IS_X11_DISPLAY(display))
-        return g_strdup(gdk_x11_screen_get_window_manager_name(
-            gdk_display_get_default_screen(display)));
-    return g_strdup("unsupported");
-#else
     Atom type_ret;
     int format_ret;
     unsigned long len, remain;
@@ -193,20 +190,18 @@ static gchar *vdagent_x11_get_wm_name(struct vdagent_x11 *x11)
     if (net_wm_name == NULL)
         return g_strdup("unknown");
     return net_wm_name;
-#endif
 }
 
 struct vdagent_x11 *vdagent_x11_create(UdscsConnection *vdagentd,
-    int debug, int sync)
+                                       int debug, int sync)
 {
     struct vdagent_x11 *x11;
     XWindowAttributes attrib;
-#ifdef WITH_GTK
+#ifdef USE_GTK_FOR_CLIPBOARD
     int i;
 #else
     int i, j, major, minor;
 #endif
-    gchar *net_wm_name = NULL;
 
     x11 = g_new0(struct vdagent_x11, 1);
     x11->vdagentd = vdagentd;
@@ -215,7 +210,7 @@ struct vdagent_x11 *vdagent_x11_create(UdscsConnection *vdagentd,
     x11->guest_output_map = g_hash_table_new_full(&g_direct_hash,
                                                   &g_direct_equal,
                                                   NULL,
-                                                  &g_free);
+                                                  NULL);
 
 
     x11->display = XOpenDisplay(NULL);
@@ -241,8 +236,7 @@ struct vdagent_x11 *vdagent_x11_create(UdscsConnection *vdagentd,
 
     for (i = 0; i < x11->screen_count; i++)
         x11->root_window[i] = RootWindow(x11->display, i);
-    x11->fd = ConnectionNumber(x11->display);
-#ifndef WITH_GTK
+#ifndef USE_GTK_FOR_CLIPBOARD
     x11->clipboard_atom = XInternAtom(x11->display, "CLIPBOARD", False);
     x11->clipboard_primary_atom = XInternAtom(x11->display, "PRIMARY", False);
     x11->targets_atom = XInternAtom(x11->display, "TARGETS", False);
@@ -269,10 +263,9 @@ struct vdagent_x11 *vdagent_x11_create(UdscsConnection *vdagentd,
 
     vdagent_x11_randr_init(x11);
 
-#ifndef WITH_GTK
+#ifndef USE_GTK_FOR_CLIPBOARD
     if (XFixesQueryExtension(x11->display, &x11->xfixes_event_base, &i) &&
         XFixesQueryVersion(x11->display, &major, &minor) && major >= 1) {
-        x11->has_xfixes = 1;
         XFixesSelectSelectionInput(x11->display, x11->root_window[0],
                                    x11->clipboard_atom,
                                    XFixesSetSelectionOwnerNotifyMask|
@@ -295,6 +288,8 @@ struct vdagent_x11 *vdagent_x11_create(UdscsConnection *vdagentd,
     /* Be a good X11 citizen and maximize the amount of data we send at once */
     if (x11->max_prop_size > 262144)
         x11->max_prop_size = 262144;
+
+    clipboard_webdav_init();
 #endif
 
     for (i = 0; i < x11->screen_count; i++) {
@@ -306,24 +301,6 @@ struct vdagent_x11 *vdagent_x11_create(UdscsConnection *vdagentd,
         x11->width[i]  = attrib.width;
         x11->height[i] = attrib.height;
     }
-    vdagent_x11_send_daemon_guest_xorg_res(x11, 1);
-
-    /* Since we are started at the same time as the wm,
-       sometimes we need to wait a bit for the _NET_WM_NAME to show up. */
-    for (i = 0; i < 9; i++) {
-        g_free(net_wm_name);
-        net_wm_name = vdagent_x11_get_wm_name(x11);
-        if (strcmp(net_wm_name, "unknown"))
-            break;
-        usleep(100000);
-    }
-    if (x11->debug)
-        syslog(LOG_DEBUG, "%s: net_wm_name=\"%s\", has icons=%d",
-               __func__, net_wm_name, vdagent_x11_has_icons_on_desktop(x11));
-    g_free(net_wm_name);
-
-    /* Flush output buffers and consume any pending events */
-    vdagent_x11_do_read(x11);
 
     return x11;
 }
@@ -333,7 +310,7 @@ void vdagent_x11_destroy(struct vdagent_x11 *x11, int vdagentd_disconnected)
     if (!x11)
         return;
 
-#ifndef WITH_GTK
+#ifndef USE_GTK_FOR_CLIPBOARD
     if (vdagentd_disconnected)
         x11->vdagentd = NULL;
 
@@ -341,20 +318,28 @@ void vdagent_x11_destroy(struct vdagent_x11 *x11, int vdagentd_disconnected)
     for (sel = 0; sel < VD_AGENT_CLIPBOARD_SELECTION_SECONDARY; ++sel) {
         vdagent_x11_set_clipboard_owner(x11, sel, owner_none);
     }
+
+    for (int i = 0; i < ATOM_NAME_CACHE_SIZE; i++) {
+        if (x11->atom_name_cache[i].name) {
+            XFree(x11->atom_name_cache[i].name);
+        }
+    }
+
+    clipboard_webdav_finalize();
 #endif
 
     g_hash_table_destroy(x11->guest_output_map);
     XCloseDisplay(x11->display);
-    g_free(x11->randr.failed_conf);
+    vdagent_x11_randr_destroy(x11);
     g_free(x11);
 }
 
 int vdagent_x11_get_fd(struct vdagent_x11 *x11)
 {
-    return x11->fd;
+    return ConnectionNumber(x11->display);
 }
 
-#ifndef WITH_GTK
+#ifndef USE_GTK_FOR_CLIPBOARD
 static void vdagent_x11_next_selection_request(struct vdagent_x11 *x11)
 {
     struct vdagent_x11_selection_request *selection_request;
@@ -436,6 +421,9 @@ static void vdagent_x11_set_clipboard_owner(struct vdagent_x11 *x11,
         }
     }
 
+    x11->clipboard_has_files[selection] = False;
+    g_clear_pointer(&x11->file_list_data[selection], g_bytes_unref);
+
     if (new_owner == owner_none) {
         /* When going from owner_guest to owner_none we need to send a
            clipboard release message to the client */
@@ -496,7 +484,7 @@ static int vdagent_x11_get_clipboard_selection(struct vdagent_x11 *x11,
 static void vdagent_x11_handle_event(struct vdagent_x11 *x11, const XEvent *event)
 {
     int i, handled = 0;
-#ifndef WITH_GTK
+#ifndef USE_GTK_FOR_CLIPBOARD
     uint8_t selection;
 
     if (event->type == x11->xfixes_event_base) {
@@ -562,7 +550,7 @@ static void vdagent_x11_handle_event(struct vdagent_x11 *x11, const XEvent *even
         /* These are uninteresting */
         handled = 1;
         break;
-#ifndef WITH_GTK
+#ifndef USE_GTK_FOR_CLIPBOARD
     case SelectionNotify:
         if (event->xselection.target == x11->targets_atom)
             vdagent_x11_handle_targets_notify(x11, event);
@@ -639,13 +627,27 @@ void vdagent_x11_do_read(struct vdagent_x11 *x11)
     }
 }
 
-#ifndef WITH_GTK
+#ifndef USE_GTK_FOR_CLIPBOARD
 static const char *vdagent_x11_get_atom_name(struct vdagent_x11 *x11, Atom a)
 {
     if (a == None)
         return "None";
 
-    return XGetAtomName(x11->display, a);
+    for (int i = 0; i < ATOM_NAME_CACHE_SIZE; i++) {
+        if (x11->atom_name_cache[i].atom == a) {
+            return x11->atom_name_cache[i].name;
+        }
+    }
+
+    struct atom_name_cache_item *cch;
+    cch = &x11->atom_name_cache[x11->atom_name_cache_next];
+    if (cch->name) {
+        XFree(cch->name);
+    }
+    cch->atom = a;
+    cch->name = XGetAtomName(x11->display, a);
+    x11->atom_name_cache_next = (x11->atom_name_cache_next + 1) % ATOM_NAME_CACHE_SIZE;
+    return cch->name;
 }
 
 static int vdagent_x11_get_selection(struct vdagent_x11 *x11, const XEvent *event,
@@ -800,6 +802,17 @@ static uint32_t vdagent_x11_target_to_type(struct vdagent_x11 *x11,
     int i, j;
 
     for (i = 0; i < clipboard_format_count; i++) {
+        /* targets for VD_AGENT_CLIPBOARD_FILE_LIST overlap with the text targets */
+        if (x11->clipboard_has_files[selection]) {
+            if (x11->clipboard_formats[i].type == VD_AGENT_CLIPBOARD_UTF8_TEXT) {
+                continue;
+            }
+        } else {
+            if (x11->clipboard_formats[i].type == VD_AGENT_CLIPBOARD_FILE_LIST) {
+                continue;
+            }
+        }
+
         for (j = 0; j < x11->clipboard_formats[i].atom_count; j++) {
             if (x11->clipboard_formats[i].atoms[j] == target) {
                 return x11->clipboard_formats[i].type;
@@ -969,6 +982,11 @@ static void vdagent_x11_handle_targets_notify(struct vdagent_x11 *x11,
     type_count = &x11->clipboard_type_count[selection];
     *type_count = 0;
     for (i = 0; i < clipboard_format_count; i++) {
+        if (x11->clipboard_formats[i].type == VD_AGENT_CLIPBOARD_FILE_LIST) {
+            /* we don't support file copying in this direction yet */
+            continue;
+        }
+
         atom = atom_lists_overlap(x11->clipboard_formats[i].atoms, atoms,
                                   x11->clipboard_formats[i].atom_count, len);
         if (atom) {
@@ -1030,6 +1048,11 @@ static void vdagent_x11_send_targets(struct vdagent_x11 *x11,
     int i, j, k, target_count = 1;
 
     for (i = 0; i < x11->clipboard_type_count[selection]; i++) {
+        if (x11->clipboard_agent_types[selection][i] == VD_AGENT_CLIPBOARD_UTF8_TEXT &&
+            x11->clipboard_has_files[selection]) {
+            continue;
+        }
+
         for (j = 0; j < clipboard_format_count; j++) {
             if (x11->clipboard_formats[j].type !=
                     x11->clipboard_agent_types[selection][i])
@@ -1113,6 +1136,17 @@ static void vdagent_x11_handle_selection_request(struct vdagent_x11 *x11)
     if (type == VD_AGENT_CLIPBOARD_NONE) {
         VSELPRINTF("guest app requested a non-advertised target");
         vdagent_x11_send_selection_notify(x11, None, NULL);
+        return;
+    }
+
+    if (type == VD_AGENT_CLIPBOARD_FILE_LIST && x11->file_list_data[selection]) {
+        VSELPRINTF("setting file list from cache");
+
+        clipboard_data_translate_to_uris_async(
+            vdagent_x11_get_atom_name(x11, event->xselectionrequest.target),
+            x11->file_list_data[selection],
+            NULL, uris_ready_cb, x11
+        );
         return;
     }
 
@@ -1250,6 +1284,13 @@ void vdagent_x11_clipboard_grab(struct vdagent_x11 *x11, uint8_t selection,
                        x11->selection_window, CurrentTime);
     vdagent_x11_set_clipboard_owner(x11, selection, owner_client);
 
+    for (int i = 0; i < x11->clipboard_type_count[selection]; i++) {
+        if (x11->clipboard_agent_types[selection][i] == VD_AGENT_CLIPBOARD_FILE_LIST) {
+            x11->clipboard_has_files[selection] = True;
+            break;
+        }
+    }
+
     /* If there're pending requests for targets, ignore the returned
      * targets as the XSetSelectionOwner() call above made them invalid */
     x11->ignore_targets_notifies[selection] =
@@ -1259,10 +1300,95 @@ void vdagent_x11_clipboard_grab(struct vdagent_x11 *x11, uint8_t selection,
     vdagent_x11_do_read(x11);
 }
 
+static void clipboard_data_send_to_requestor(struct vdagent_x11 *x11,
+    uint8_t selection, uint8_t *data, uint32_t size, Bool take_ownership)
+{
+    XEvent *event;
+    Atom prop;
+
+    event = &x11->selection_req->event;
+
+    prop = event->xselectionrequest.property;
+    if (prop == None) {
+        prop = event->xselectionrequest.target;
+    }
+
+    if (size > x11->max_prop_size) {
+        unsigned long len = size;
+        VSELPRINTF("Starting incr send of clipboard data");
+
+        vdagent_x11_set_error_handler(x11, vdagent_x11_ignore_bad_window_handler);
+        XSelectInput(x11->display, event->xselectionrequest.requestor,
+                     PropertyChangeMask);
+        XChangeProperty(x11->display, event->xselectionrequest.requestor, prop,
+                        x11->incr_atom, 32, PropModeReplace,
+                        (unsigned char*)&len, 1);
+        if (vdagent_x11_restore_error_handler(x11) == 0) {
+            if (take_ownership) {
+                x11->selection_req_data = data;
+            } else {
+                /* duplicate data */
+                x11->selection_req_data = malloc(size);
+                if (x11->selection_req_data == NULL) {
+                    SELPRINTF("out of memory allocating selection buffer");
+                    return;
+                }
+                memcpy(x11->selection_req_data, data, size);
+            }
+
+            x11->selection_req_data_pos = 0;
+            x11->selection_req_data_size = size;
+            x11->selection_req_atom = prop;
+            vdagent_x11_send_selection_notify(x11, prop, x11->selection_req);
+        } else {
+            SELPRINTF("clipboard data sent failed, requestor window gone");
+        }
+    } else {
+        vdagent_x11_set_error_handler(x11, vdagent_x11_ignore_bad_window_handler);
+        XChangeProperty(x11->display, event->xselectionrequest.requestor, prop,
+                        event->xselectionrequest.target, 8, PropModeReplace,
+                        data, size);
+        if (vdagent_x11_restore_error_handler(x11) == 0) {
+            vdagent_x11_send_selection_notify(x11, prop, NULL);
+        } else {
+            SELPRINTF("clipboard data sent failed, requestor window gone");
+        }
+
+        if (take_ownership) {
+            g_free(data);
+        }
+    }
+}
+
+static void uris_ready_cb(GObject *source, GAsyncResult *res, gpointer user_data)
+{
+    struct vdagent_x11 *x11 = user_data;
+    GError *err = NULL;
+    size_t size;
+
+    char *uris = clipboard_data_translate_to_uris_finish(source, res, &size, &err);
+    if (g_error_matches(err, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+        g_error_free(err);
+        return;
+    }
+    if (!x11->selection_req) {
+        return;
+    }
+    uint8_t selection = x11->selection_req->selection;
+    if (err) {
+        SELPRINTF("failed to translate data to uris %s", err->message);
+        g_error_free(err);
+    }
+
+    clipboard_data_send_to_requestor(x11, selection, (uint8_t *)uris, size, True);
+
+    /* Flush output buffers and consume any pending events */
+    vdagent_x11_do_read(x11);
+}
+
 void vdagent_x11_clipboard_data(struct vdagent_x11 *x11, uint8_t selection,
     uint32_t type, uint8_t *data, uint32_t size)
 {
-    Atom prop;
     XEvent *event;
     uint32_t type_from_event;
 
@@ -1303,44 +1429,17 @@ void vdagent_x11_clipboard_data(struct vdagent_x11 *x11, uint8_t selection,
         return;
     }
 
-    prop = event->xselectionrequest.property;
-    if (prop == None)
-        prop = event->xselectionrequest.target;
+    if (type == VD_AGENT_CLIPBOARD_FILE_LIST) {
+        g_clear_pointer(&x11->file_list_data[selection], g_bytes_unref);
+        x11->file_list_data[selection] = g_bytes_new(data, size);
 
-    if (size > x11->max_prop_size) {
-        unsigned long len = size;
-        VSELPRINTF("Starting incr send of clipboard data");
-
-        vdagent_x11_set_error_handler(x11, vdagent_x11_ignore_bad_window_handler);
-        XSelectInput(x11->display, event->xselectionrequest.requestor,
-                     PropertyChangeMask);
-        XChangeProperty(x11->display, event->xselectionrequest.requestor, prop,
-                        x11->incr_atom, 32, PropModeReplace,
-                        (unsigned char*)&len, 1);
-        if (vdagent_x11_restore_error_handler(x11) == 0) {
-            /* duplicate data */
-            x11->selection_req_data = malloc(size);
-            if (x11->selection_req_data != NULL) {
-                memcpy(x11->selection_req_data, data, size);
-                x11->selection_req_data_pos = 0;
-                x11->selection_req_data_size = size;
-                x11->selection_req_atom = prop;
-                vdagent_x11_send_selection_notify(x11, prop, x11->selection_req);
-            } else {
-                SELPRINTF("out of memory allocating selection buffer");
-            }
-        } else {
-            SELPRINTF("clipboard data sent failed, requestor window gone");
-        }
+        clipboard_data_translate_to_uris_async(
+            vdagent_x11_get_atom_name(x11, event->xselectionrequest.target),
+            x11->file_list_data[selection], NULL, uris_ready_cb, x11
+        );
+        return;
     } else {
-        vdagent_x11_set_error_handler(x11, vdagent_x11_ignore_bad_window_handler);
-        XChangeProperty(x11->display, event->xselectionrequest.requestor, prop,
-                        event->xselectionrequest.target, 8, PropModeReplace,
-                        data, size);
-        if (vdagent_x11_restore_error_handler(x11) == 0)
-            vdagent_x11_send_selection_notify(x11, prop, NULL);
-        else
-            SELPRINTF("clipboard data sent failed, requestor window gone");
+        clipboard_data_send_to_requestor(x11, selection, data, size, False);
     }
 
     /* Flush output buffers and consume any pending events */
@@ -1387,30 +1486,3 @@ void vdagent_x11_client_disconnected(struct vdagent_x11 *x11)
     }
 }
 #endif
-
-/* Function used to determine the default location to save file-xfers,
-   xdg desktop dir or xdg download dir. We err on the safe side and use a
-   whitelist approach, so any unknown desktop will end up with saving
-   file-xfers to the xdg download dir, and opening the xdg download dir with
-   xdg-open when the file-xfer completes. */
-int vdagent_x11_has_icons_on_desktop(struct vdagent_x11 *x11)
-{
-    const char * const wms_with_icons_on_desktop[] = {
-        "Metacity", /* GNOME-2 or GNOME-3 fallback */
-        "Xfwm4",    /* Xfce */
-        "Marco",    /* Mate */
-        "Metacity (Marco)", /* Mate, newer */
-        NULL
-    };
-    gchar *net_wm_name = vdagent_x11_get_wm_name(x11);
-    int i;
-
-    for (i = 0; wms_with_icons_on_desktop[i]; i++)
-        if (!strcmp(net_wm_name, wms_with_icons_on_desktop[i])) {
-            g_free(net_wm_name);
-            return 1;
-        }
-
-    g_free(net_wm_name);
-    return 0;
-}

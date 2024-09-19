@@ -23,6 +23,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdbool.h>
 #include <string.h>
 #include <unistd.h>
 #include <fcntl.h>
@@ -46,6 +47,14 @@
 
 #define DEFAULT_UINPUT_DEVICE "/dev/uinput"
 
+// Maximum number of transfers active at any time.
+// Avoid DoS from client.
+// As each transfer could likely end up taking a file descriptor
+// it is good to have a limit less than the number of file descriptors
+// in the process (by default 1024). The daemon do not open file
+// descriptors for the transfers but the agents do.
+#define MAX_ACTIVE_TRANSFERS 128
+
 struct agent_data {
     char *session;
     int width;
@@ -54,9 +63,9 @@ struct agent_data {
     int screen_count;
 };
 
-/* variables */
-static const char *pidfilename = "/run/spice-vdagentd/spice-vdagentd.pid";
+static const char pidfilename[] = "/run/spice-vdagentd/spice-vdagentd.pid";
 
+/* variables */
 static gchar *portdev = NULL;
 static gchar *vdagentd_socket = NULL;
 static gchar *uinput_device = NULL;
@@ -77,13 +86,20 @@ static int capabilities_size = 0;
 static const char *active_session = NULL;
 static unsigned int session_count = 0;
 static UdscsConnection *active_session_conn = NULL;
-static int agent_owns_clipboard[256] = { 0, };
+static bool agent_owns_clipboard[256] = { false, };
 static int retval = 0;
-static int client_connected = 0;
+static bool client_connected = false;
 static int max_clipboard = -1;
 static uint32_t clipboard_serial[256];
 
 static GMainLoop *loop;
+
+static void agent_data_destroy(struct agent_data *agent_data)
+{
+    g_free(agent_data->session);
+    g_free(agent_data->screen_info);
+    g_free(agent_data);
+}
 
 static void vdagentd_quit(gint exit_code)
 {
@@ -152,10 +168,11 @@ static void send_capabilities(VirtioPort *vport,
 
 static void do_client_disconnect(void)
 {
+    g_hash_table_remove_all(active_xfers);
     if (client_connected) {
         udscs_server_write_all(server, VDAGENTD_CLIENT_DISCONNECTED, 0, 0,
                                NULL, 0);
-        client_connected = 0;
+        client_connected = false;
     }
 }
 
@@ -165,7 +182,7 @@ void do_client_mouse(struct vdagentd_uinput **uinputp, VDAgentMouseState *mouse)
     if (!*uinputp) {
         /* Try to re-open the tablet */
         if (active_session_conn) {
-            struct agent_data *agent_data =
+            const struct agent_data *agent_data =
             g_object_get_data(G_OBJECT(active_session_conn), "agent_data");
             *uinputp = vdagentd_uinput_create(uinput_device,
                                               agent_data->width,
@@ -199,7 +216,7 @@ static void do_client_monitors(VirtioPort *vport, int port_nr,
     vdagentd_write_xorg_conf(new_monitors);
 
     g_free(mon_config);
-    mon_config = g_memdup(new_monitors, size);
+    mon_config = g_memdup2(new_monitors, size);
 
     /* Send monitor config to currently active agent */
     if (active_session_conn)
@@ -232,14 +249,14 @@ static void do_client_capabilities(VirtioPort *vport,
 {
     capabilities_size = VD_AGENT_CAPS_SIZE_FROM_MSG_SIZE(message_header->size);
     g_free(capabilities);
-    capabilities = g_memdup(caps->caps, capabilities_size * sizeof(uint32_t));
+    capabilities = g_memdup2(caps->caps, capabilities_size * sizeof(uint32_t));
 
     if (caps->request) {
         /* Report the previous client has disconnected. */
         do_client_disconnect();
         if (debug)
             syslog(LOG_DEBUG, "New client connected");
-        client_connected = 1;
+        client_connected = true;
         memset(clipboard_serial, 0, sizeof(clipboard_serial));
         send_capabilities(vport, 0);
     }
@@ -286,7 +303,7 @@ static void do_client_clipboard(VirtioPort *vport,
         }
 
         msg_type = VDAGENTD_CLIPBOARD_GRAB;
-        agent_owns_clipboard[selection] = 0;
+        agent_owns_clipboard[selection] = false;
         break;
     case VD_AGENT_CLIPBOARD_REQUEST: {
         VDAgentClipboardRequest *req = (VDAgentClipboardRequest *)data;
@@ -372,10 +389,34 @@ static void do_client_file_xfer(VirtioPort *vport,
                "Cancelling client file-xfer request %u",
                s->id, VD_AGENT_FILE_XFER_STATUS_SESSION_LOCKED, NULL, 0);
             return;
+        } else if (g_hash_table_size(active_xfers) >= MAX_ACTIVE_TRANSFERS) {
+            VDAgentFileXferStatusError error = {
+                GUINT32_TO_LE(VD_AGENT_FILE_XFER_STATUS_ERROR_GLIB_IO),
+                GUINT32_TO_LE(G_IO_ERROR_TOO_MANY_OPEN_FILES),
+            };
+            size_t detail_size = sizeof(error);
+            if (!VD_AGENT_HAS_CAPABILITY(capabilities, capabilities_size,
+                                         VD_AGENT_CAP_FILE_XFER_DETAILED_ERRORS)) {
+                detail_size = 0;
+            }
+            send_file_xfer_status(vport,
+               "Too many transfers ongoing. "
+               "Cancelling client file-xfer request %u",
+               s->id, VD_AGENT_FILE_XFER_STATUS_ERROR, (void*) &error, detail_size);
+            return;
+        } else if (g_hash_table_lookup(active_xfers, GUINT_TO_POINTER(s->id)) != NULL) {
+            // id is already used -- client is confused
+            send_file_xfer_status(vport,
+               "File transfer ID is already used. "
+               "Cancelling client file-xfer request %u",
+               s->id, VD_AGENT_FILE_XFER_STATUS_ERROR, NULL, 0);
+            return;
         }
-        udscs_write(active_session_conn, VDAGENTD_FILE_XFER_START, 0, 0,
-                    data, message_header->size);
-        return;
+        msg_type = VDAGENTD_FILE_XFER_START;
+        id = s->id;
+        // associate the id with the active connection
+        g_hash_table_insert(active_xfers, GUINT_TO_POINTER(id), active_session_conn);
+        break;
     }
     case VD_AGENT_FILE_XFER_STATUS: {
         VDAgentFileXferStatusMessage *s = (VDAgentFileXferStatusMessage *)data;
@@ -400,6 +441,12 @@ static void do_client_file_xfer(VirtioPort *vport,
         return;
     }
     udscs_write(conn, msg_type, 0, 0, data, message_header->size);
+
+    // client told that transfer is ended, agents too stop the transfer
+    // and release resources
+    if (message_header->type == VD_AGENT_FILE_XFER_STATUS) {
+        g_hash_table_remove(active_xfers, GUINT_TO_POINTER(id));
+    }
 }
 
 static void forward_data_to_session_agent(uint32_t type, uint8_t *data, size_t size)
@@ -412,7 +459,7 @@ static void forward_data_to_session_agent(uint32_t type, uint8_t *data, size_t s
     udscs_write(active_session_conn, type, 0, 0, data, size);
 }
 
-static gsize vdagent_message_min_size[] =
+static const gsize vdagent_message_min_size[] =
 {
     -1, /* Does not exist */
     sizeof(VDAgentMouseState), /* VD_AGENT_MOUSE_STATE */
@@ -598,13 +645,9 @@ static void virtio_port_read_complete(
         break;
     }
     case VD_AGENT_GRAPHICS_DEVICE_INFO: {
-        if (device_info) {
-            g_free(device_info);
-            device_info = NULL;
-            device_info_size = 0;
-        }
         // store device info for re-sending when a session agent reconnects
-        device_info = g_memdup(data, message_header->size);
+        g_free(device_info);
+        device_info = g_memdup2(data, message_header->size);
         device_info_size = message_header->size;
         forward_data_to_session_agent(VDAGENTD_GRAPHICS_DEVICE_INFO, data, message_header->size);
         break;
@@ -624,7 +667,7 @@ static void virtio_port_read_complete(
 
 static void virtio_port_error_cb(VDAgentConnection *conn, GError *err)
 {
-    gboolean old_client_connected = client_connected;
+    bool old_client_connected = client_connected;
     syslog(LOG_CRIT, "AIIEEE lost spice client connection, reconnecting (err: %s)",
                      err ? err->message : "");
     g_clear_error(&err);
@@ -676,7 +719,8 @@ static void virtio_write_clipboard(uint8_t selection, uint32_t msg_type,
     if (msg_type == VD_AGENT_CLIPBOARD_GRAB) {
         if (VD_AGENT_HAS_CAPABILITY(capabilities, capabilities_size,
                                     VD_AGENT_CAP_CLIPBOARD_GRAB_SERIAL)) {
-            uint32_t serial = GUINT32_TO_LE(clipboard_serial[selection]++);
+            uint32_t serial = GUINT32_TO_LE(clipboard_serial[selection]);
+            clipboard_serial[selection]++;
             vdagent_virtio_port_write_append(virtio_port, (uint8_t*)&serial, sizeof(serial));
         }
         virtio_msg_uint32_to_le(data, data_size, 0);
@@ -717,7 +761,7 @@ static void do_agent_clipboard(UdscsConnection *conn,
     switch (header->type) {
     case VDAGENTD_CLIPBOARD_GRAB:
         msg_type = VD_AGENT_CLIPBOARD_GRAB;
-        agent_owns_clipboard[selection] = 1;
+        agent_owns_clipboard[selection] = true;
         break;
     case VDAGENTD_CLIPBOARD_REQUEST:
         msg_type = VD_AGENT_CLIPBOARD_REQUEST;
@@ -737,7 +781,7 @@ static void do_agent_clipboard(UdscsConnection *conn,
     case VDAGENTD_CLIPBOARD_RELEASE:
         msg_type = VD_AGENT_CLIPBOARD_RELEASE;
         size = 0;
-        agent_owns_clipboard[selection] = 0;
+        agent_owns_clipboard[selection] = false;
         break;
     default:
         syslog(LOG_WARNING, "unexpected clipboard message type");
@@ -772,7 +816,7 @@ error:
    closes both. */
 static void check_xorg_resolution(void)
 {
-    struct agent_data *agent_data = NULL;
+    const struct agent_data *agent_data = NULL;
     if (active_session_conn)
         agent_data = g_object_get_data(G_OBJECT(active_session_conn), "agent_data");
 
@@ -830,7 +874,7 @@ static int connection_matches_active_session(UdscsConnection *conn,
     void *priv)
 {
     UdscsConnection **conn_ret = (UdscsConnection **)priv;
-    struct agent_data *agent_data = g_object_get_data(G_OBJECT(conn), "agent_data");
+    const struct agent_data *agent_data = g_object_get_data(G_OBJECT(conn), "agent_data");
 
     /* Check if this connection matches the currently active session */
     if (!agent_data->session || !active_session)
@@ -851,7 +895,7 @@ static void release_clipboards(void)
             vdagent_virtio_port_write(virtio_port, VDP_CLIENT_PORT,
                                       VD_AGENT_CLIPBOARD_RELEASE, 0, &sel, 1);
         }
-        agent_owns_clipboard[sel] = 0;
+        agent_owns_clipboard[sel] = false;
     }
 }
 
@@ -916,28 +960,88 @@ static gboolean remove_active_xfers(gpointer key, gpointer value, gpointer conn)
         return 0;
 }
 
+/* Check if this connection matches the passed session */
+static int connection_matches_session(UdscsConnection *conn, void *priv)
+{
+    const char *session = priv;
+    const struct agent_data *agent_data = g_object_get_data(G_OBJECT(conn), "agent_data");
+
+    if (!agent_data || !agent_data->session ||
+        strcmp(agent_data->session, session) != 0) {
+        return 0;
+    }
+
+    return 1;
+}
+
+/* Check a given process has a given UID */
+static bool check_uid_of_pid(pid_t pid, uid_t uid)
+{
+    char fn[128];
+    struct stat st;
+
+    snprintf(fn, sizeof(fn), "/proc/%u/status", (unsigned) pid);
+    if (stat(fn, &st) != 0 || st.st_uid != uid) {
+        return false;
+    }
+    return true;
+}
+
 static void agent_connect(UdscsConnection *conn)
 {
     struct agent_data *agent_data;
     agent_data = g_new0(struct agent_data, 1);
     GError *err = NULL;
-    gint pid;
 
     if (session_info) {
-        pid = vdagent_connection_get_peer_pid(VDAGENT_CONNECTION(conn), &err);
-        if (err) {
-            syslog(LOG_ERR, "Could not get peer PID, disconnecting new client: %s",
-                            err->message);
-            g_error_free(err);
-            g_free(agent_data);
+        PidUid pid_uid = vdagent_connection_get_peer_pid_uid(VDAGENT_CONNECTION(conn), &err);
+        if (err || pid_uid.pid <= 0) {
+            static const char msg[] = "Could not get peer PID, disconnecting new client";
+            if (err) {
+                syslog(LOG_ERR, "%s: %s", msg, err->message);
+                g_error_free(err);
+            } else {
+                syslog(LOG_ERR, "%s", msg);
+            }
+            agent_data_destroy(agent_data);
             udscs_server_destroy_connection(server, conn);
             return;
         }
 
-        agent_data->session = session_info_session_for_pid(session_info, pid);
+        agent_data->session = session_info_session_for_pid(session_info, pid_uid.pid);
+
+        uid_t session_uid = session_info_uid_for_session(session_info, agent_data->session);
+
+        /* Check that the UID of the PID did not change, this should be done after
+         * computing the session to avoid race conditions.
+         * This can happen as vdagent_connection_get_peer_pid_uid get information
+         * from the time of creating the socket, but the process in the meantime
+         * have been replaced */
+        if (!check_uid_of_pid(pid_uid.pid, pid_uid.uid) ||
+            /* Check that the user launching the Agent is the same as session one
+             * or root user.
+             * This prevents session hijacks from other users. */
+            (pid_uid.uid != 0 && pid_uid.uid != session_uid)) {
+            syslog(LOG_ERR, "UID mismatch: UID=%u PID=%u suid=%u", pid_uid.uid,
+                   pid_uid.pid, session_uid);
+            agent_data_destroy(agent_data);
+            udscs_server_destroy_connection(server, conn);
+            return;
+        }
+
+        // Check there are no other connection for this session
+        // Note that "conn" is not counted as "agent_data" is still not attached to it
+        if (udscs_server_for_all_clients(server, connection_matches_session,
+                                         agent_data->session) > 0) {
+            syslog(LOG_ERR, "An agent is already connected for this session");
+            agent_data_destroy(agent_data);
+            udscs_server_destroy_connection(server, conn);
+            return;
+        }
     }
 
-    g_object_set_data(G_OBJECT(conn), "agent_data", agent_data);
+    g_object_set_data_full(G_OBJECT(conn), "agent_data", agent_data,
+                           (GDestroyNotify) agent_data_destroy);
     udscs_write(conn, VDAGENTD_VERSION, 0, 0,
                 (uint8_t *)VERSION, strlen(VERSION) + 1);
     update_active_session_connection(conn);
@@ -950,13 +1054,8 @@ static void agent_connect(UdscsConnection *conn)
 
 static void agent_disconnect(VDAgentConnection *conn, GError *err)
 {
-    struct agent_data *agent_data = g_object_get_data(G_OBJECT(conn), "agent_data");
-
     g_hash_table_foreach_remove(active_xfers, remove_active_xfers, conn);
 
-    g_clear_pointer(&agent_data->session, g_free);
-    g_free(agent_data->screen_info);
-    g_free(agent_data);
     if (err) {
         syslog(LOG_ERR, "%s", err->message);
         g_error_free(err);
@@ -991,7 +1090,7 @@ static void do_agent_xorg_resolution(UdscsConnection             *conn,
     }
 
     g_free(agent_data->screen_info);
-    agent_data->screen_info = g_memdup(data, header->size);
+    agent_data->screen_info = g_memdup2(data, header->size);
     agent_data->width  = header->arg1;
     agent_data->height = header->arg2;
     agent_data->screen_count = n;
@@ -1007,6 +1106,15 @@ static void do_agent_file_xfer_status(UdscsConnection             *conn,
     const gchar *log_msg = NULL;
     guint data_size = 0;
 
+    UdscsConnection *task_conn = g_hash_table_lookup(active_xfers, task_id);
+    if (task_conn == NULL || task_conn != conn) {
+        // Protect against misbehaving agent.
+        // Ignore the message, but do not disconnect the agent, to protect against
+        // a misbehaving client that tries to disconnect a good agent
+        // e.g. by sending a new task and immediately cancelling it.
+        return;
+    }
+
     /* header->arg1 = file xfer task id, header->arg2 = file xfer status */
     switch (header->arg2) {
         case VD_AGENT_FILE_XFER_STATUS_NOT_ENOUGH_SPACE:
@@ -1021,10 +1129,9 @@ static void do_agent_file_xfer_status(UdscsConnection             *conn,
     send_file_xfer_status(virtio_port, log_msg, header->arg1, header->arg2,
                           data, data_size);
 
-    if (header->arg2 == VD_AGENT_FILE_XFER_STATUS_CAN_SEND_DATA)
-        g_hash_table_insert(active_xfers, task_id, conn);
-    else
+    if (header->arg2 != VD_AGENT_FILE_XFER_STATUS_CAN_SEND_DATA) {
         g_hash_table_remove(active_xfers, task_id);
+    }
 }
 
 static void agent_read_complete(UdscsConnection *conn,
@@ -1184,10 +1291,6 @@ int main(int argc, char *argv[])
         uinput_device = g_strdup(DEFAULT_UINPUT_DEVICE);
     }
 
-    g_unix_signal_add(SIGINT, signal_handler, NULL);
-    g_unix_signal_add(SIGHUP, signal_handler, NULL);
-    g_unix_signal_add(SIGTERM, signal_handler, NULL);
-
     openlog("spice-vdagentd", do_daemonize ? 0 : LOG_PERROR, LOG_USER);
 
     /* Setup communication with vdagent process(es) */
@@ -1207,7 +1310,9 @@ int main(int argc, char *argv[])
     /* systemd socket activation not enabled, create our own */
 #endif /* WITH_SYSTEMD_SOCKET_ACTIVATION */
     {
+        mode_t mode = umask(0111);
         udscs_server_listen_to_address(server, vdagentd_socket, &err);
+        umask(mode);
     }
 
     if (err) {
@@ -1218,19 +1323,6 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    /* no need to set permissions on a socket that was provided by systemd */
-    if (own_socket) {
-        if (chmod(vdagentd_socket, 0666)) {
-            syslog(LOG_CRIT, "Fatal could not change permissions on %s: %m",
-                   vdagentd_socket);
-            udscs_destroy_server(server);
-            return 1;
-        }
-    }
-
-    if (do_daemonize)
-        daemonize();
-
 #ifdef WITH_STATIC_UINPUT
     uinput = vdagentd_uinput_create(uinput_device, 1024, 768, NULL, 0,
                                     debug > 1, uinput_fake);
@@ -1239,6 +1331,13 @@ int main(int argc, char *argv[])
         return 1;
     }
 #endif
+
+    if (do_daemonize)
+        daemonize();
+
+    g_unix_signal_add(SIGINT, signal_handler, NULL);
+    g_unix_signal_add(SIGHUP, signal_handler, NULL);
+    g_unix_signal_add(SIGTERM, signal_handler, NULL);
 
     if (want_session_info)
         session_info = session_info_create(debug);
@@ -1252,6 +1351,7 @@ int main(int argc, char *argv[])
 
     active_xfers = g_hash_table_new(g_direct_hash, g_direct_equal);
 
+    udscs_server_start(server);
     loop = g_main_loop_new(NULL, FALSE);
     g_main_loop_run(loop);
 

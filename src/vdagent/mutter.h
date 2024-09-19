@@ -1,28 +1,33 @@
-Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
-Upstream-Name: spice-vdagent
-Source: http://www.spice-space.org/
+/* mutter.h - implements the DBUS interface to mutter
 
-Files: *
-Copyright: Copyright 2010-2015 Red Hat, Inc.
-License: GPL-3+
+ Copyright 2020 Red Hat, Inc.
 
-Files: debian/*
-Copyright: Copyright (C) 2010-2016 Liang Guo <bluestonechina@gmail.com>
-License: GPL-3+
+ Red Hat Authors:
+ Julien Ropé <jrope@redhat.com>
 
-License: GPL-3+
  This program is free software: you can redistribute it and/or modify
  it under the terms of the GNU General Public License as published by
  the Free Software Foundation, either version 3 of the License, or
  (at your option) any later version.
- .
+
  This program is distributed in the hope that it will be useful,
  but WITHOUT ANY WARRANTY; without even the implied warranty of
  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  GNU General Public License for more details.
- .
+
  You should have received a copy of the GNU General Public License
  along with this program.  If not, see <http://www.gnu.org/licenses/>.
- .
- On Debian systems, the complete text of the GNU General Public
- License version 3 can be found in "/usr/share/common-licenses/GPL-3".
+ */
+
+#ifndef SRC_VDAGENT_MUTTER_H_
+#define SRC_VDAGENT_MUTTER_H_
+
+typedef struct VDAgentMutterDBus VDAgentMutterDBus;
+
+VDAgentMutterDBus *vdagent_mutter_create(GHashTable *connector_mapping);
+void vdagent_mutter_destroy(VDAgentMutterDBus *mutter);
+
+GArray *vdagent_mutter_get_resolutions(VDAgentMutterDBus *mutter, int *width, int *height, int *screen_count);
+
+
+#endif /* SRC_VDAGENT_MUTTER_H_ */

@@ -7,8 +7,12 @@
 #include <spice/vd_agent.h>
 
 #include <X11/extensions/Xrandr.h>
+#include "display.h"
 
-#ifndef WITH_GTK
+#ifndef USE_GTK_FOR_CLIPBOARD
+
+#include "webdav-cb.h"
+
 /* Macros to print a message to the logfile prefixed by the selection */
 #define SELPRINTF(format, ...) \
     syslog(LOG_ERR, "%s: " format, \
@@ -63,9 +67,18 @@ static const struct clipboard_format_tmpl clipboard_format_templates[] = {
       "image/x-MS-bmp", "image/x-win-bitmap", NULL }, },
     { VD_AGENT_CLIPBOARD_IMAGE_TIFF, { "image/tiff", NULL }, },
     { VD_AGENT_CLIPBOARD_IMAGE_JPG, { "image/jpeg", NULL }, },
+    { VD_AGENT_CLIPBOARD_FILE_LIST, { "text/uri-list",
+      "text/plain;charset=utf-8", "application/x-kde-cutselection",
+      "x-special/gnome-copied-files", "x-special/mate-copied-files", NULL } },
 };
 
 #define clipboard_format_count (sizeof(clipboard_format_templates)/sizeof(clipboard_format_templates[0]))
+
+#define ATOM_NAME_CACHE_SIZE 16
+struct atom_name_cache_item {
+    Atom atom;
+    char *name;
+};
 #endif
 
 #define MAX_SCREENS 16
@@ -79,7 +92,7 @@ struct monitor_size {
 
 struct vdagent_x11 {
     Display *display;
-#ifndef WITH_GTK
+#ifndef USE_GTK_FOR_CLIPBOARD
     struct clipboard_format_info clipboard_formats[clipboard_format_count];
     Atom clipboard_atom;
     Atom clipboard_primary_atom;
@@ -87,8 +100,9 @@ struct vdagent_x11 {
     Atom incr_atom;
     Atom multiple_atom;
     Atom timestamp_atom;
+    struct atom_name_cache_item atom_name_cache[ATOM_NAME_CACHE_SIZE];
+    int atom_name_cache_next;
     Window selection_window;
-    int has_xfixes;
     int xfixes_event_base;
     int max_prop_size;
     int expected_targets_notifies[256];
@@ -96,6 +110,7 @@ struct vdagent_x11 {
     int clipboard_owner[256];
     int clipboard_type_count[256];
     uint32_t clipboard_agent_types[256][256];
+    Bool clipboard_has_files[256];
     Atom clipboard_x11_targets[256][256];
     /* Data for conversion_req which is currently being processed */
     struct vdagent_x11_conversion_request *conversion_req;
@@ -108,21 +123,21 @@ struct vdagent_x11 {
     uint8_t *selection_req_data;
     uint32_t selection_req_data_pos;
     uint32_t selection_req_data_size;
+    GBytes *file_list_data[256];
     Atom selection_req_atom;
 #endif
     Window root_window[MAX_SCREENS];
     UdscsConnection *vdagentd;
     int debug;
-    int fd;
     int screen_count;
     int width[MAX_SCREENS];
     int height[MAX_SCREENS];
-    int xrandr_event_base;
     /* resolution change state */
     struct {
         XRRScreenResources *res;
         XRROutputInfo **outputs;
         XRRCrtcInfo **crtcs;
+        int event_base;
         int min_width;
         int max_width;
         int min_height;
@@ -141,14 +156,18 @@ struct vdagent_x11 {
     int has_xinerama;
     int dont_send_guest_xorg_res;
     GHashTable *guest_output_map;
+
+    VDAgentDisplay *vdagent_display;
 };
 
 extern int (*vdagent_x11_prev_error_handler)(Display *, XErrorEvent *);
 extern int vdagent_x11_caught_error;
 
 void vdagent_x11_randr_init(struct vdagent_x11 *x11);
-void vdagent_x11_send_daemon_guest_xorg_res(struct vdagent_x11 *x11,
-                                            int update);
+void vdagent_x11_randr_destroy(struct vdagent_x11 *x11);
+
+GArray *vdagent_x11_get_resolutions(struct vdagent_x11 *x11, gboolean update,
+                                    int *width, int *height, int *system_screen_count);
 void vdagent_x11_randr_handle_root_size_change(struct vdagent_x11 *x11,
                                             int screen, int width, int height);
 int vdagent_x11_randr_handle_event(struct vdagent_x11 *x11,

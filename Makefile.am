@@ -41,10 +41,16 @@ src_spice_vdagent_SOURCES =			\
 	src/vdagent/audio.h			\
 	src/vdagent/clipboard.c			\
 	src/vdagent/clipboard.h			\
+	src/vdagent/webdav-cb.c			\
+	src/vdagent/webdav-cb.h			\
 	src/vdagent/device-info.c		\
 	src/vdagent/device-info.h		\
+	src/vdagent/display.c			\
+	src/vdagent/display.h			\
 	src/vdagent/file-xfers.c		\
 	src/vdagent/file-xfers.h		\
+	src/vdagent/mutter.c			\
+	src/vdagent/mutter.h			\
 	src/vdagent/x11-priv.h			\
 	src/vdagent/x11-randr.c			\
 	src/vdagent/x11.c			\
@@ -105,11 +111,34 @@ src_spice_vdagentd_SOURCES =			\
 	src/vdagentd/virtio-port.h		\
 	$(NULL)
 
+tests_test_session_info_CFLAGS =		\
+	$(DBUS_CFLAGS)				\
+	$(GIO2_CFLAGS)				\
+	-I$(srcdir)/src				\
+	-I$(srcdir)/src/vdagentd		\
+	$(NULL)
+
+tests_test_session_info_LDADD =			\
+	$(DBUS_LIBS)				\
+	$(GIO2_LIBS)				\
+	$(NULL)
+
+tests_test_session_info_SOURCES =		\
+	src/vdagentd/session-info.h		\
+	tests/test-session-info.c		\
+	$(NULL)
+
 if HAVE_CONSOLE_KIT
 src_spice_vdagentd_SOURCES += src/vdagentd/console-kit.c
+tests_test_session_info_SOURCES += src/vdagentd/console-kit.c
+check_PROGRAMS += tests/test-session-info
 else
 if HAVE_LIBSYSTEMD_LOGIN
 src_spice_vdagentd_SOURCES += src/vdagentd/systemd-login.c
+tests_test_session_info_CFLAGS += $(LIBSYSTEMD_LOGIN_CFLAGS)
+tests_test_session_info_LDADD += $(LIBSYSTEMD_LOGIN_LIBS)
+tests_test_session_info_SOURCES += src/vdagentd/systemd-login.c
+check_PROGRAMS += tests/test-session-info
 else
 src_spice_vdagentd_SOURCES += src/vdagentd/dummy-session-info.c
 endif
@@ -138,6 +167,10 @@ systemdunit_DATA = \
 	$(top_srcdir)/data/spice-vdagentd.service \
 	$(top_srcdir)/data/spice-vdagentd.socket
 
+userunitdir = $(SYSTEMDUSERUNITDIR)
+userunit_DATA = \
+	$(top_srcdir)/data/spice-vdagent.service
+
 udevrulesdir = $(udevdir)/rules.d
 udevrules_DATA = $(top_srcdir)/data/70-spice-vdagentd.rules
 
@@ -156,6 +189,7 @@ EXTRA_DIST =					\
 	CHANGELOG.md				\
 	data/70-spice-vdagentd.rules		\
 	data/spice-vdagent.desktop		\
+	data/spice-vdagent.service	   	\
 	data/spice-vdagentd			\
 	data/spice-vdagentd.service		\
 	data/spice-vdagentd.socket		\
@@ -171,3 +205,5 @@ tests_test_device_info_LDADD = $(src_spice_vdagent_LDADD)
 tests_test_device_info_CFLAGS = $(src_spice_vdagent_CFLAGS)
 
 check_PROGRAMS += tests/test-device-info
+
+check_PROGRAMS += tests/test-termination

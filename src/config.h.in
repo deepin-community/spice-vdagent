@@ -33,10 +33,16 @@
 /* Define to 1 if you have the ANSI C header files. */
 #undef STDC_HEADERS
 
+/* If defined, use GTK for clipboard features */
+#undef USE_GTK_FOR_CLIPBOARD
+
+/* If defined, use GTK for monitor resolution instead of XRandr */
+#undef USE_GTK_FOR_MONITORS
+
 /* Version number of package */
 #undef VERSION
 
-/* If defined, vdagent will favor GTK+ over Xlib */
+/* If defined, load GTK+ libraries */
 #undef WITH_GTK
 
 /* If defined, vdagentd will use a static uinput device */
@@ -58,3 +64,6 @@
 
 /* Define for large files, on AIX-style hosts. */
 #undef _LARGE_FILES
+
+/* GLib2 < 2.68 compatibility */
+#undef g_memdup2
