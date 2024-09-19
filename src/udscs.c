@@ -30,6 +30,12 @@
 #include "vdagentd-proto-strings.h"
 #include "vdagent-connection.h"
 
+// Maximum number of connected agents.
+// Avoid DoS from agents.
+// As each connection end up taking a file descriptor is good to have a limit
+// less than the number of file descriptors in the process (by default 1024).
+#define MAX_CONNECTED_AGENTS 128
+
 struct _UdscsConnection {
     VDAgentConnection parent_instance;
     int debug;
@@ -101,16 +107,14 @@ static void udscs_connection_class_init(UdscsConnectionClass *klass)
 UdscsConnection *udscs_connect(const char *socketname,
     udscs_read_callback read_callback,
     VDAgentConnErrorCb error_cb,
-    int debug)
+    int debug,
+    GError **err)
 {
     GIOStream *io_stream;
     UdscsConnection *conn;
-    GError *err = NULL;
 
-    io_stream = vdagent_socket_connect(socketname, &err);
-    if (err) {
-        syslog(LOG_ERR, "%s: %s", __func__, err->message);
-        g_error_free(err);
+    io_stream = vdagent_socket_connect(socketname, err);
+    if (*err) {
         return NULL;
     }
 
@@ -186,6 +190,7 @@ struct udscs_server *udscs_server_new(
     server->read_callback = read_callback;
     server->error_cb = error_cb;
     server->service = g_socket_service_new();
+    g_socket_service_stop(server->service);
 
     g_signal_connect(server->service, "incoming",
         G_CALLBACK(udscs_server_accept_cb), server);
@@ -223,6 +228,11 @@ void udscs_server_listen_to_address(struct udscs_server *server,
     g_object_unref(sock_addr);
 }
 
+void udscs_server_start(struct udscs_server *server)
+{
+    g_socket_service_start(server->service);
+}
+
 void udscs_server_destroy_connection(struct udscs_server *server,
                                      UdscsConnection     *conn)
 {
@@ -247,6 +257,12 @@ static gboolean udscs_server_accept_cb(GSocketService    *service,
 {
     struct udscs_server *server = user_data;
     UdscsConnection *new_conn;
+
+    /* prevents DoS having too many agents attached */
+    if (g_list_length(server->connections) >= MAX_CONNECTED_AGENTS) {
+        syslog(LOG_ERR, "Too many agents connected");
+        return TRUE;
+    }
 
     new_conn = g_object_new(UDSCS_TYPE_CONNECTION, NULL);
     new_conn->debug = server->debug;

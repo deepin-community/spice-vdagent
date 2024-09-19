@@ -136,7 +136,7 @@ void vdagent_x11_randr_init(struct vdagent_x11 *x11)
         return;
     }
 
-    if (XRRQueryExtension(x11->display, &x11->xrandr_event_base, &i)) {
+    if (XRRQueryExtension(x11->display, &x11->randr.event_base, &i)) {
         XRRQueryVersion(x11->display, &x11->xrandr_major, &x11->xrandr_minor);
         if (x11->xrandr_major == 1 && x11->xrandr_minor >= 3)
             x11->has_xrandr = 1;
@@ -169,6 +169,12 @@ void vdagent_x11_randr_init(struct vdagent_x11 *x11)
         /* Standard xrandr setup, nothing to see here */
         break;
     }
+}
+
+void vdagent_x11_randr_destroy(struct vdagent_x11 *x11)
+{
+    free_randr_resources(x11);
+    g_free(x11->randr.failed_conf);
 }
 
 static XRRModeInfo *
@@ -414,7 +420,7 @@ static RROutput get_xrandr_output_for_display_id(struct vdagent_x11 *x11, int di
         gpointer value;
         if (g_hash_table_lookup_extended(x11->guest_output_map, GINT_TO_POINTER(display_id),
                                          NULL, &value)) {
-            return *(gint64*)value;
+            return (RROutput)value;
         }
     }
 
@@ -511,6 +517,7 @@ static int set_screen_to_best_size(struct vdagent_x11 *x11, int width, int heigh
 void vdagent_x11_randr_handle_root_size_change(struct vdagent_x11 *x11,
     int screen, int width, int height)
 {
+#ifndef USE_GTK_FOR_MONITORS
     update_randr_res(x11, 0);
 
     if (width == x11->width[screen] && height == x11->height[screen]) {
@@ -523,8 +530,9 @@ void vdagent_x11_randr_handle_root_size_change(struct vdagent_x11 *x11,
 
     x11->width[screen]  = width;
     x11->height[screen] = height;
+#endif
     if (!x11->dont_send_guest_xorg_res) {
-        vdagent_x11_send_daemon_guest_xorg_res(x11, 1);
+        vdagent_display_send_daemon_guest_res(x11->vdagent_display, TRUE);
     }
 }
 
@@ -533,7 +541,7 @@ int vdagent_x11_randr_handle_event(struct vdagent_x11 *x11,
 {
     int handled = TRUE;
 
-    switch (event->type - x11->xrandr_event_base) {
+    switch (event->type - x11->randr.event_base) {
         case RRScreenChangeNotify: {
             const XRRScreenChangeNotifyEvent *sce =
                 (const XRRScreenChangeNotifyEvent *) event;
@@ -542,9 +550,11 @@ int vdagent_x11_randr_handle_event(struct vdagent_x11 *x11,
             break;
         }
         case RRNotify: {
+#ifndef USE_GTK_FOR_MONITORS
             update_randr_res(x11, 0);
+#endif
             if (!x11->dont_send_guest_xorg_res)
-                vdagent_x11_send_daemon_guest_xorg_res(x11, 1);
+                vdagent_display_send_daemon_guest_res(x11->vdagent_display, TRUE);
             break;
         }
         default:
@@ -778,64 +788,32 @@ static void dump_monitors_config(struct vdagent_x11 *x11,
 
 // handle the device info message from the server. This will allow us to
 // maintain a mapping from spice display id to xrandr output
-void vdagent_x11_handle_graphics_device_info(struct vdagent_x11 *x11, uint8_t *data, size_t size)
+void vdagent_x11_handle_device_display_info(struct vdagent_x11 *x11,
+                                            VDAgentDeviceDisplayInfo *device_display_info,
+                                            gboolean has_virtual_zero_display)
 {
-    VDAgentGraphicsDeviceInfo *graphics_device_info = (VDAgentGraphicsDeviceInfo *)data;
-    VDAgentDeviceDisplayInfo *device_display_info = graphics_device_info->display_info;
+    RROutput x_output;
+    if (lookup_xrandr_output_for_device_info(device_display_info, x11->display,
+                                             x11->randr.res, &x_output, has_virtual_zero_display)) {
+        syslog(LOG_INFO, "Adding graphics device info: channel_id: %u monitor_id: "
+               "%u device_address: %s, device_display_id: %u xrandr output ID: %lu",
+               device_display_info->channel_id,
+               device_display_info->monitor_id,
+               device_display_info->device_address,
+               device_display_info->device_display_id,
+               x_output);
 
-    void *buffer_end = data + size;
-
-    syslog(LOG_INFO, "Received Graphics Device Info:");
-
-    for (size_t i = 0; i < graphics_device_info->count; ++i) {
-        if ((void*) device_display_info > buffer_end ||
-                (void*) (&device_display_info->device_address +
-                    device_display_info->device_address_len) > buffer_end) {
-            syslog(LOG_ERR, "Malformed graphics_display_info message, "
-                   "extends beyond the end of the buffer");
-            break;
-        }
-
-        // make sure the string is terminated:
-        if (device_display_info->device_address_len > 0) {
-            device_display_info->device_address[device_display_info->device_address_len - 1] = '\0';
-        } else {
-            syslog(LOG_WARNING, "Zero length device_address received for channel_id: %u, monitor_id: %u",
-                   device_display_info->channel_id, device_display_info->monitor_id);
-        }
-
-        RROutput x_output;
-        if (lookup_xrandr_output_for_device_info(device_display_info, x11->display,
-                                                 x11->randr.res, &x_output)) {
-            gint64 *value = g_new(gint64, 1);
-            *value = x_output;
-
-            syslog(LOG_INFO, "Adding graphics device info: channel_id: %u monitor_id: "
-                   "%u device_address: %s, device_display_id: %u xrandr output ID: %lu",
-                   device_display_info->channel_id,
-                   device_display_info->monitor_id,
-                   device_display_info->device_address,
-                   device_display_info->device_display_id,
-                   x_output);
-
-            g_hash_table_insert(x11->guest_output_map,
-                GUINT_TO_POINTER(device_display_info->channel_id + device_display_info->monitor_id),
-                value);
-        } else {
-            syslog(LOG_INFO, "channel_id: %u monitor_id: %u device_address: %s, "
-                   "device_display_id: %u xrandr output ID NOT FOUND",
-                   device_display_info->channel_id,
-                   device_display_info->monitor_id,
-                   device_display_info->device_address,
-                   device_display_info->device_display_id);
-        }
-
-        device_display_info = (VDAgentDeviceDisplayInfo*) ((char*) device_display_info +
-            sizeof(VDAgentDeviceDisplayInfo) + device_display_info->device_address_len);
+        g_hash_table_insert(x11->guest_output_map,
+            GUINT_TO_POINTER(device_display_info->channel_id + device_display_info->monitor_id),
+            (gpointer)x_output);
+    } else {
+        syslog(LOG_INFO, "channel_id: %u monitor_id: %u device_address: %s, "
+               "device_display_id: %u xrandr output ID NOT FOUND",
+               device_display_info->channel_id,
+               device_display_info->monitor_id,
+               device_display_info->device_address,
+               device_display_info->device_display_id);
     }
-
-    // make sure daemon is up-to-date with (possibly updated) device IDs
-    vdagent_x11_send_daemon_guest_xorg_res(x11, 1);
 }
 
 static int get_output_index_for_display_id(struct vdagent_x11 *x11, int display_id)
@@ -1004,7 +982,7 @@ void vdagent_x11_set_monitor_config(struct vdagent_x11 *x11,
                    fullscreen it will keep sending the failing config. */
                 g_free(x11->randr.failed_conf);
                 x11->randr.failed_conf =
-                    g_memdup(mon_config, config_size(mon_config->num_of_monitors));
+                    g_memdup2(mon_config, config_size(mon_config->num_of_monitors));
                 return;
             }
         }
@@ -1054,18 +1032,45 @@ void vdagent_x11_set_monitor_config(struct vdagent_x11 *x11,
     x11->dont_send_guest_xorg_res = 0;
 
 exit:
-    vdagent_x11_send_daemon_guest_xorg_res(x11, 0);
+    vdagent_display_send_daemon_guest_res(x11->vdagent_display, FALSE);
 
     /* Flush output buffers and consume any pending events */
     vdagent_x11_do_read(x11);
     g_free(curr);
 }
 
-void vdagent_x11_send_daemon_guest_xorg_res(struct vdagent_x11 *x11, int update)
+/**
+ * Builds a list of available monitors, associated with their resolutions.
+ *
+ * This function will use the x11->guest_output_map hashtable to map the SPICE display ID to the
+ * XRandr display ID, and make sure we get the right resolution for each SPICE display.
+ * See vdagent_x11_handle_device_display_info() for how this hashtable is populated.
+ *
+ * If the ID can't be matched (which happens when running under XWayland for instance), a default
+ * mapping is made, which assumes the list of X displays are in the same order as the SPICE displays.
+ * This will cause issues if some SPICE displays are not enabled (for instance: display 2 is
+ * enabled, but not display 1, causing a mismatch of IDs).
+ *
+ * Parameters:
+ * x11    - pointer to the X11 structure
+ * update - TRUE if the cached resolutions need to be updated before building the list
+ * width  - full width of the desktop area (containing all the displays)
+ * height - full height of the desktop area (containing all the displays)
+ * system_screen_count - number of displays found on the system. In some situations, this may be
+ *                       different than the number of SPICE displays (for instance: multiple displays
+ *                       overlapping the same area of the desktop).
+ *                       Used for logging/troubleshooting purposes.
+ *
+ * Returns: a GArray of vdagentd_guest_xorg_resolution elements, to be sent to the vdagent daemon.
+ *          NULL if an error occurs.
+ */
+GArray *vdagent_x11_get_resolutions(struct vdagent_x11 *x11, gboolean update,
+                                    int *width, int *height, int *system_screen_count)
 {
     GArray *res_array = g_array_new(FALSE, FALSE, sizeof(struct vdagentd_guest_xorg_resolution));
-    int i, width = 0, height = 0, screen_count = 0;
+    int i, screen_count = 0;
 
+    *width = *height = 0;
     if (x11->has_xrandr) {
         if (update)
             update_randr_res(x11, 0);
@@ -1088,12 +1093,11 @@ void vdagent_x11_send_daemon_guest_xorg_res(struct vdagent_x11 *x11, int update)
                 // all down.
                 RROutput output_id = x11->randr.res->outputs[i];
                 GHashTableIter iter;
-                gpointer key, value;
+                gpointer key, other_id;
                 g_hash_table_iter_init(&iter, x11->guest_output_map);
                 bool found = false;
-                while (g_hash_table_iter_next(&iter, &key, &value)) {
-                    gint64 *other_id = value;
-                    if (*other_id == output_id) {
+                while (g_hash_table_iter_next(&iter, &key, &other_id)) {
+                    if ((RROutput)other_id == output_id) {
                         curr.display_id = GPOINTER_TO_INT(key);
                         g_array_append_val(res_array, curr);
                         found = true;
@@ -1104,8 +1108,8 @@ void vdagent_x11_send_daemon_guest_xorg_res(struct vdagent_x11 *x11, int update)
                 }
             }
         }
-        width  = x11->width[0];
-        height = x11->height[0];
+        *width  = x11->width[0];
+        *height = x11->height[0];
     } else if (x11->has_xinerama) {
         XineramaScreenInfo *screen_info = NULL;
 
@@ -1119,7 +1123,7 @@ void vdagent_x11_send_daemon_guest_xorg_res(struct vdagent_x11 *x11, int update)
                        screen_info[i].screen_number, screen_count);
                 XFree(screen_info);
                 g_array_free(res_array, true);
-                return;
+                return NULL;
             }
             struct vdagentd_guest_xorg_resolution *curr = &g_array_index(res_array,
                                                                          struct vdagentd_guest_xorg_resolution,
@@ -1130,8 +1134,8 @@ void vdagent_x11_send_daemon_guest_xorg_res(struct vdagent_x11 *x11, int update)
             curr->y = screen_info[i].y_org;
         }
         XFree(screen_info);
-        width  = x11->width[0];
-        height = x11->height[0];
+        *width  = x11->width[0];
+        *height = x11->height[0];
     } else {
 no_info:
         for (i = 0; i < screen_count; i++) {
@@ -1139,11 +1143,12 @@ no_info:
             res.width  = x11->width[i];
             res.height = x11->height[i];
             /* No way to get screen coordinates, assume rtl order */
-            res.x = width;
+            res.x = *width;
             res.y = 0;
-            width += x11->width[i];
-            if (x11->height[i] > height)
-                height = x11->height[i];
+            *width += x11->width[i];
+            if (x11->height[i] > *height) {
+                *height = x11->height[i];
+            }
             g_array_append_val(res_array, res);
         }
     }
@@ -1151,22 +1156,9 @@ no_info:
     if (screen_count == 0) {
         syslog(LOG_DEBUG, "Screen count is zero, are we on wayland?");
         g_array_free(res_array, TRUE);
-        return;
+        return NULL;
     }
 
-    if (x11->debug) {
-        syslog(LOG_DEBUG, "Sending guest screen resolutions to vdagentd:");
-        if (res_array->len > screen_count) {
-            syslog(LOG_DEBUG, "(NOTE: list may contain overlapping areas when multiple spice displays show the same guest output)");
-        }
-        for (i = 0; i < res_array->len; i++) {
-            struct vdagentd_guest_xorg_resolution *res = (struct vdagentd_guest_xorg_resolution*)res_array->data;
-            syslog(LOG_DEBUG, "   screen %d %dx%d%+d%+d, display_id=%d", i,
-                   res[i].width, res[i].height, res[i].x, res[i].y, res[i].display_id);
-        }
-    }
-
-    udscs_write(x11->vdagentd, VDAGENTD_GUEST_XORG_RESOLUTION, width, height,
-                (uint8_t *)res_array->data, res_array->len * sizeof(struct vdagentd_guest_xorg_resolution));
-    g_array_free(res_array, TRUE);
+    *system_screen_count = screen_count;
+    return res_array;
 }

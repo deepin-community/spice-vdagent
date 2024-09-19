@@ -250,7 +250,9 @@ void session_info_destroy(struct session_info *si)
         return;
 
     si_dbus_match_remove(si);
-    dbus_connection_close(si->dbus.system_connection);
+    if (si->dbus.system_connection) {
+        dbus_connection_close(si->dbus.system_connection);
+    }
     sd_login_monitor_unref(si->mon);
     g_free(si->session);
     g_free(si);
@@ -390,5 +392,14 @@ gboolean session_info_is_user(struct session_info *si)
     ret = (g_strcmp0(class, "user") == 0);
     g_free(class);
 
+    return ret;
+}
+
+uid_t session_info_uid_for_session(struct session_info *si, const char *session)
+{
+    uid_t ret = -1;
+    if (sd_session_get_uid(session, &ret) < 0) {
+        return -1;
+    }
     return ret;
 }

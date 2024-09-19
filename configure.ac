@@ -1,5 +1,5 @@
 AC_PREREQ(2.59)
-AC_INIT([spice-vdagent], [0.20.0])
+AC_INIT([spice-vdagent], [0.22.1])
 AC_CONFIG_SRCDIR([configure.ac])
 
 AM_CONFIG_HEADER([src/config.h])
@@ -64,7 +64,9 @@ AC_MSG_RESULT($with_init_script)
 
 if test "x$init_systemd" = "xyes"; then
   SYSTEMDSYSTEMUNITDIR=`${PKG_CONFIG} systemd --variable=systemdsystemunitdir`
+  SYSTEMDUSERUNITDIR=`${PKG_CONFIG} systemd --variable=systemduserunitdir`
   AC_SUBST(SYSTEMDSYSTEMUNITDIR)
+  AC_SUBST(SYSTEMDUSERUNITDIR)
   # earlier versions of systemd require a separate libsystemd-daemon library
   PKG_CHECK_MODULES([LIBSYSTEMD_DAEMON],
                     [libsystemd >= 209],
@@ -81,13 +83,30 @@ AC_ARG_WITH([gtk],
                [Use GTK+ instead of Xlib @<:@default=auto@:>@])],
             [],
             [with_gtk="auto"])
-if test "x$with_gtk" != "xno"; then
-  PKG_CHECK_MODULES([GTK], [gtk+-3.0 >= 3.22], [
-                     AC_DEFINE([WITH_GTK], [1], [If defined, vdagent will favor GTK+ over Xlib])
+AC_ARG_WITH([gtk4],
+            [AS_HELP_STRING(
+               [--with-gtk4=@<:@yes/no@:>@],
+               [Use GTK4 instead of Xlib @<:@default=no@:>@])],
+            [],
+            [with_gtk4="no"])
+if test "x$with_gtk4" = "xyes"; then
+    PKG_CHECK_MODULES([GTK], [gtk4 >= 3.98], [
+                     AC_DEFINE([WITH_GTK], [1], [If defined, load GTK+ libraries])
+                     AC_DEFINE([USE_GTK_FOR_MONITORS], [1], [If defined, use GTK for monitor resolution instead of XRandr])
+                     with_gtk="yes"
+                 ], [
+                     AC_MSG_ERROR([GTK4 requested but not found])
+                     with_gtk="no"])
+else
+    if test "x$with_gtk" != "xno"; then
+        PKG_CHECK_MODULES([GTK], [gtk+-3.0 >= 3.22], [
+                     AC_DEFINE([WITH_GTK], [1], [If defined, load GTK+ libraries])
+                     AC_DEFINE([USE_GTK_FOR_CLIPBOARD], [1], [If defined, use GTK for clipboard features])
                      with_gtk="yes"
                  ], [
                      AS_IF([test "x$with_gtk" = "xyes"], [AC_MSG_ERROR([GTK+ requested but not found])])
                      with_gtk="no"])
+    fi
 fi
 
 AC_ARG_ENABLE([pciaccess],
@@ -102,10 +121,14 @@ AC_ARG_ENABLE([static-uinput],
 
 PKG_CHECK_MODULES([GIO2], [gio-unix-2.0 >= 2.50])
 PKG_CHECK_MODULES(X, [xfixes xrandr >= 1.3 xinerama x11])
-PKG_CHECK_MODULES(SPICE, [spice-protocol >= 0.14.1])
+PKG_CHECK_MODULES(SPICE, [spice-protocol >= 0.14.3])
 PKG_CHECK_MODULES(ALSA, [alsa >= 1.0.22])
 PKG_CHECK_MODULES([DBUS], [dbus-1])
 PKG_CHECK_MODULES([DRM], [libdrm])
+
+PKG_CHECK_MODULES([GLIB], [glib-2.0 >= 2.68], [], [
+    AC_DEFINE(g_memdup2, g_memdup, [GLib2 < 2.68 compatibility])
+])
 
 if test "$with_session_info" = "auto" || test "$with_session_info" = "systemd"; then
     PKG_CHECK_MODULES([LIBSYSTEMD_LOGIN],
@@ -155,7 +178,7 @@ if test x"$enable_static_uinput" = "xyes" ; then
 fi
 
 # If no CFLAGS are set, set some sane default CFLAGS
-if test "$ac_test_CFLAGS" != set; then
+if test -z "$ac_test_CFLAGS"; then
   DEFAULT_CFLAGS="-Wall -Werror -Wp,-D_FORTIFY_SOURCE=2 -fno-strict-aliasing -fstack-protector --param=ssp-buffer-size=4"
   for F in $DEFAULT_CFLAGS; do
     AC_MSG_CHECKING([whether $CC supports $F])

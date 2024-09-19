@@ -1,9 +1,7 @@
 Source: spice-vdagent
 Priority: optional
-Maintainer: Debian QA Group <packages@qa.debian.org>
-Build-Depends: autoconf,
-               automake,
-               debhelper (>= 12),
+Maintainer: Abhijith PA <abhijith@debian.org>
+Build-Depends: debhelper-compat (= 13),
                desktop-file-utils,
                libasound2-dev (>= 1.0.22),
                libdbus-1-dev,
@@ -17,12 +15,12 @@ Build-Depends: autoconf,
                libxinerama-dev,
                libxrandr-dev,
                pkg-config,
-               systemd,
-               udev,
+               procps,
+               systemd-dev,
                libdrm-dev
-Standards-Version: 4.5.0
+Standards-Version: 4.6.2
 Section: x11
-Homepage: http://www.spice-space.org/
+Homepage: https://www.spice-space.org/
 Vcs-Git: https://salsa.debian.org/debian/spice-vdagent.git
 Vcs-Browser: https://salsa.debian.org/debian/spice-vdagent
 

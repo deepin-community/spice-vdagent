@@ -142,24 +142,25 @@ void vdagent_connection_destroy(gpointer p)
     g_object_unref(self);
 }
 
-gint vdagent_connection_get_peer_pid(VDAgentConnection *self,
-                                     GError           **err)
+PidUid vdagent_connection_get_peer_pid_uid(VDAgentConnection *self,
+                                           GError           **err)
 {
     VDAgentConnectionPrivate *priv = vdagent_connection_get_instance_private(self);
     GSocket *sock;
     GCredentials *cred;
-    gint pid = -1;
+    PidUid pid_uid = { -1, -1 };
 
-    g_return_val_if_fail(G_IS_SOCKET_CONNECTION(priv->io_stream), pid);
+    g_return_val_if_fail(G_IS_SOCKET_CONNECTION(priv->io_stream), pid_uid);
 
     sock = g_socket_connection_get_socket(G_SOCKET_CONNECTION(priv->io_stream));
     cred = g_socket_get_credentials(sock, err);
     if (cred) {
-        pid = g_credentials_get_unix_pid(cred, NULL);
+        pid_uid.pid = g_credentials_get_unix_pid(cred, err);
+        pid_uid.uid = g_credentials_get_unix_user(cred, err);
         g_object_unref(cred);
     }
 
-    return pid;
+    return pid_uid;
 }
 
 /* Performs single write operation,
@@ -210,11 +211,7 @@ static gboolean do_write(VDAgentConnection *self, gboolean block)
 static gboolean out_stream_ready_cb(GObject *pollable_stream,
                                     gpointer user_data)
 {
-    if (do_write(user_data, FALSE)) {
-        return TRUE;
-    }
-    g_object_unref(user_data);
-    return FALSE;
+    return do_write(user_data, FALSE);
 }
 
 void vdagent_connection_write(VDAgentConnection *self,
@@ -231,8 +228,8 @@ void vdagent_connection_write(VDAgentConnection *self,
         out = G_POLLABLE_OUTPUT_STREAM(g_io_stream_get_output_stream(priv->io_stream));
 
         source = g_pollable_output_stream_create_source(out, priv->cancellable);
-        g_source_set_callback(source, G_SOURCE_FUNC(out_stream_ready_cb),
-            g_object_ref(self), NULL);
+        g_source_set_callback(source, (GSourceFunc) out_stream_ready_cb,
+            g_object_ref(self), g_object_unref);
         g_source_attach(source, NULL);
         g_source_unref(source);
     }

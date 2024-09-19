@@ -1,0 +1,28 @@
+From: Jeremy Bicha <jeremy.bicha@canonical.com>
+Date: Thu, 24 Feb 2022 09:58:23 -0500
+Subject: Disable test-session-info
+
+Requires running systemd which we don't have during the build
+
+TODO: Convert this into a build option so that we can run
+it with autopkgtest instead
+
+https://gitlab.freedesktop.org/spice/linux/vd_agent/-/issues/24
+https://gitlab.freedesktop.org/spice/linux/vd_agent/-/merge_requests/32
+---
+ Makefile.am | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/Makefile.am b/Makefile.am
+index 9c30bae..d23cace 100644
+--- a/Makefile.am
++++ b/Makefile.am
+@@ -138,7 +138,7 @@ src_spice_vdagentd_SOURCES += src/vdagentd/systemd-login.c
+ tests_test_session_info_CFLAGS += $(LIBSYSTEMD_LOGIN_CFLAGS)
+ tests_test_session_info_LDADD += $(LIBSYSTEMD_LOGIN_LIBS)
+ tests_test_session_info_SOURCES += src/vdagentd/systemd-login.c
+-check_PROGRAMS += tests/test-session-info
++# check_PROGRAMS += tests/test-session-info
+ else
+ src_spice_vdagentd_SOURCES += src/vdagentd/dummy-session-info.c
+ endif

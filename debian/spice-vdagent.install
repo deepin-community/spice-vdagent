@@ -1,7 +1,8 @@
 etc/xdg/autostart/spice-vdagent.desktop
-lib/systemd/system
-lib/udev/rules.d
+${env:deb_systemdsystemunitdir}
+${env:deb_udevdir}/rules.d
 usr/bin
+usr/lib/systemd/user
 usr/lib/tmpfiles.d
 usr/sbin
 usr/share

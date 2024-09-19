@@ -2,6 +2,28 @@ Gitlab markdown format support linking to Issues (#) and Merge requests (!) and 
 
 https://gitlab.freedesktop.org/spice/linux/vd_agent/-/blob/master/CHANGELOG.md
 
+News in spice-vdagent 0.22.1
+===========================
+* !42 - Fix crash on startup of session agent
+
+News in spice-vdagent 0.22.0
+===========================
+* !40 - Handle side mouse buttons
+* !39 - Set retry limit to connect to vdagentd and improve logging error
+* !35 - Fix deprecation warning
+* !37 - Provide systemd spice-vdagent.service
+
+News in spice-vdagent 0.21.0
+============================
+* Security fixes:
+  CVE-2020-25650, CVE-2020-25651, CVE-2020-25652, CVE-2020-25653
+* Fix shutdown issue due to incompatible thread/fork uses with GLib
+* Fix mouse pointer issues under Wayland
+* Fix a crash when running without dbus (e.g: within containers)
+* !9  - Introduce optional GTK4 support for monitor management
+* !13 - Enable copying files from client using webdav
+* Bump spice-protocol dependency to v0.14.3
+
 News in spice-vdagent 0.20.0
 ============================
 
